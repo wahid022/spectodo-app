@@ -5,9 +5,9 @@ on:
     branches: [main]
 
 env:
-  REGION: us-central1
-  REGISTRY: us-central1-docker.pkg.dev
-  REPO: spectodo
+  REGION: asia-south1
+  REGISTRY: asia-south1-docker.pkg.dev
+  REPO: spectodo-repo
 
 jobs:
   ci:
@@ -101,7 +101,7 @@ jobs:
             --port=8080 \
             --service-account=spectodo-backend-sa@$PROJECT_ID.iam.gserviceaccount.com \
             --set-secrets="DATABASE_URL=DATABASE_URL:latest,FRONTEND_URL=FRONTEND_URL:latest" \
-            --add-cloudsql-instances=$PROJECT_ID:$REGION:spectodo-db \
+            --add-cloudsql-instances=$PROJECT_ID:$REGION:spectodo-postgres \
             --min-instances=0 \
             --max-instances=5 \
             --concurrency=80 \
