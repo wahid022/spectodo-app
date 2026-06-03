@@ -1,0 +1,200 @@
+name: Deploy — Production
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev
+  REPO: spectodo
+
+jobs:
+  ci:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Install backend deps
+        run: npm ci --prefix backend
+
+      - name: Lint backend
+        run: npm run lint --prefix backend
+
+      - name: Test backend
+        run: npm run test --prefix backend
+
+  deploy-backend:
+    name: Backend (PR)
+    runs-on: ubuntu-latest
+    environment: PR
+    needs: ci
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      backend-url: ${{ steps.get-url.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER_PR }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA_PR }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build & push backend image
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_PR }}
+        run: |
+          IMAGE=$REGISTRY/$PROJECT_ID/$REPO/backend:${{ github.sha }}
+          docker build -t $IMAGE ./backend
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Run Prisma migrations (Cloud Run Job)
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_PR }}
+        run: |
+          gcloud run jobs update prisma-migrate-pr \
+            --image=${{ env.IMAGE }} \
+            --region=$REGION \
+            --project=$PROJECT_ID
+          gcloud run jobs execute prisma-migrate-pr \
+            --region=$REGION \
+            --wait \
+            --project=$PROJECT_ID
+
+      - name: Deploy backend to Cloud Run
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_PR }}
+        run: |
+          gcloud run deploy spectodo-backend-pr \
+            --image=${{ env.IMAGE }} \
+            --region=$REGION \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --service-account=spectodo-backend-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest,FRONTEND_URL=FRONTEND_URL:latest" \
+            --add-cloudsql-instances=$PROJECT_ID:$REGION:spectodo-db \
+            --min-instances=0 \
+            --max-instances=5 \
+            --concurrency=80 \
+            --memory=512Mi \
+            --cpu=1 \
+            --project=$PROJECT_ID
+
+      - name: Get & cache backend URL
+        id: get-url
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_PR }}
+        run: |
+          URL=$(gcloud run services describe spectodo-backend-pr \
+            --region=$REGION --project=$PROJECT_ID --format='value(status.url)')
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          STORED=$(gcloud secrets versions access latest \
+            --secret=NEXT_PUBLIC_API_URL --project=$PROJECT_ID 2>/dev/null || echo "")
+          if [ "$URL" != "$STORED" ]; then
+            echo -n "$URL" | gcloud secrets versions add NEXT_PUBLIC_API_URL \
+              --data-file=- --project=$PROJECT_ID
+          fi
+
+  deploy-frontend:
+    name: Frontend (PR)
+    runs-on: ubuntu-latest
+    environment: PR
+    needs: deploy-backend
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER_PR }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA_PR }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build & push frontend image
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_PR }}
+          BACKEND_URL: ${{ needs.deploy-backend.outputs.backend-url }}
+        run: |
+          IMAGE=$REGISTRY/$PROJECT_ID/$REPO/frontend:${{ github.sha }}
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=$BACKEND_URL \
+            -t $IMAGE .
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy frontend to Cloud Run
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_PR }}
+        run: |
+          gcloud run deploy spectodo-frontend-pr \
+            --image=${{ env.IMAGE }} \
+            --region=$REGION \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --service-account=spectodo-frontend-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --min-instances=0 \
+            --max-instances=3 \
+            --concurrency=80 \
+            --memory=512Mi \
+            --cpu=1 \
+            --project=$PROJECT_ID
+
+      - name: Sync FRONTEND_URL to backend CORS
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_PR }}
+        run: |
+          FRONTEND_URL=$(gcloud run services describe spectodo-frontend-pr \
+            --region=$REGION --project=$PROJECT_ID --format='value(status.url)')
+          STORED=$(gcloud secrets versions access latest \
+            --secret=FRONTEND_URL --project=$PROJECT_ID 2>/dev/null || echo "")
+          if [ "$FRONTEND_URL" != "$STORED" ]; then
+            echo -n "$FRONTEND_URL" | gcloud secrets versions add FRONTEND_URL \
+              --data-file=- --project=$PROJECT_ID
+            gcloud run services update spectodo-backend-pr \
+              --region=$REGION \
+              --update-secrets="FRONTEND_URL=FRONTEND_URL:latest" \
+              --project=$PROJECT_ID
+          fi

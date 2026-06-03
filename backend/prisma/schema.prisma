@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Task {
+  id        String    @id @default(cuid())
+  title     String    @db.VarChar(255)
+  completed Boolean   @default(false)
+  category  String    @default("Personal")
+  priority  String    @default("Medium")
+  dueDate   DateTime?
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  reminderTime          DateTime?
+  reminderEnabled       Boolean   @default(false)
+  reminderStatus        String    @default("none")
+  notificationTriggered Boolean   @default(false)
+  snoozeUntil           DateTime?
+}
