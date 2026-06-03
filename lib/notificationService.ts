@@ -16,8 +16,7 @@ export async function showReminderNotification(taskId: string, title: string): P
   if (Notification.permission !== 'granted') return;
   const reg = await navigator.serviceWorker.ready;
   // `actions` is valid on ServiceWorkerRegistration.showNotification but missing from TS lib types
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (reg.showNotification as (t: string, o: any) => Promise<void>)(title, {
+  await (reg.showNotification as (t: string, o: unknown) => Promise<void>)(title, {
     body: 'Reminder: tap to manage',
     actions: [
       { action: 'snooze', title: 'Snooze 5 min' },
