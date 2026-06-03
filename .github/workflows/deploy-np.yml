@@ -2,7 +2,7 @@ name: Deploy — Non-Production
 
 on:
   push:
-    branches: [develop,]
+    branches: [develop, feature/deployment]
 
 env:
   REGION: asia-south1

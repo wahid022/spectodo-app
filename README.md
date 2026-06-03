@@ -35,3 +35,10 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 # spectodo-app
+
+## Deployment
+
+This app is deployed on GCP Cloud Run via GitHub Actions CI/CD.
+
+- Push to `feature/deployment` or `develop` → deploys to **Non-Production**
+- Push to `main` (with approval) → deploys to **Production**
