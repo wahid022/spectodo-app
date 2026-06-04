@@ -84,6 +84,9 @@ jobs:
             --image=${{ env.IMAGE }} \
             --command="npx" \
             --args="prisma,migrate,deploy" \
+            --service-account=spectodo-backend-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest" \
+            --add-cloudsql-instances=$PROJECT_ID:$REGION:spectodo-postgres \
             --region=$REGION \
             --project=$PROJECT_ID
           gcloud run jobs execute prisma-migrate-pr \
