@@ -82,6 +82,8 @@ jobs:
         run: |
           gcloud run jobs update prisma-migrate-np \
             --image=${{ env.IMAGE }} \
+            --command="npx" \
+            --args="prisma,migrate,deploy" \
             --region=$REGION \
             --project=$PROJECT_ID
           gcloud run jobs execute prisma-migrate-np \
